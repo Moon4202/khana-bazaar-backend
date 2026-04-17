@@ -102,6 +102,25 @@ app.get('/api/menu', async (req, res) => {
   }
 });
 
+// GET /api/menu/deals - Sirf deals wale items
+app.get('/api/menu/deals', async (req, res) => {
+  try {
+    let query = db.collection('menu_items');
+    query = query.where('restaurantStatus', '==', 'active');
+    query = query.where('isDeal', '==', true);
+    
+    const snapshot = await query.get();
+    const items = [];
+    snapshot.forEach(doc => {
+      items.push({ id: doc.id, ...doc.data() });
+    });
+    
+    res.json({ items, count: items.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // POST /api/order - Place new order
 app.post('/api/order', async (req, res) => {
   try {
