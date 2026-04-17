@@ -121,7 +121,7 @@ app.get('/api/menu/deals', async (req, res) => {
   }
 });
 
-// POST /api/order - Place new order
+// POST /api/order - Place new order (FIXED WhatsApp Message)
 app.post('/api/order', async (req, res) => {
   try {
     const { restaurantId, customerName, customerAddress, customerPhone, items, totalPrice, selectedSize } = req.body;
@@ -143,23 +143,21 @@ app.post('/api/order', async (req, res) => {
     const restaurantDoc = await db.collection('restaurants').doc(restaurantId).get();
     const whatsapp = restaurantDoc.data().whatsapp;
     
-    // Build order details with size if pizza
-    let orderDetails = '';
-    items.forEach(item => {
-      orderDetails += `• ${item.title}`;
-      if (item.size) orderDetails += ` (${item.size})`;
-      orderDetails += ` x${item.quantity} - Rs ${item.price}\n`;
-    });
+    // Build order details with proper encoding for WhatsApp
+    const orderItemsText = items.map(item => {
+      const sizeText = item.size ? ` (${item.size})` : '';
+      return `• ${item.title}${sizeText} - Rs ${item.price}`;
+    }).join('%0A');
     
-    const message = `Order from Khana Bazaar 🍔%0A%0A` +
-      `*Customer Details:*%0A` +
-      `Name: ${customerName}%0A` +
-      `Address: ${customerAddress}%0A` +
-      `Phone: ${customerPhone}%0A%0A` +
-      `*Order Items:*%0A` +
-      orderDetails +
-      `%0A*Total: Rs ${totalPrice}*%0A%0A` +
-      `Order ID: ${orderRef.id}`;
+    const message = `Order%20from%20Khana%20Bazaar%20%F0%9F%8D%94%0A%0A` +
+      `*Customer%20Details*%0A` +
+      `Name%3A%20${encodeURIComponent(customerName)}%0A` +
+      `Address%3A%20${encodeURIComponent(customerAddress)}%0A` +
+      `Phone%3A%20${encodeURIComponent(customerPhone)}%0A%0A` +
+      `*Order%20Items*%0A` +
+      `${orderItemsText}%0A%0A` +
+      `*Total%3A%20Rs%20${totalPrice}*%0A%0A` +
+      `Order%20ID%3A%20${orderRef.id}`;
     
     const whatsappUrl = `https://wa.me/${whatsapp}?text=${message}`;
     
@@ -303,7 +301,6 @@ app.post('/api/resturent/menu/add', async (req, res) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
     
-    // Handle pizza sizes or regular price
     if (foodType === 'pizza' && sizePrices) {
       menuItem.sizePrices = sizePrices;
       menuItem.price = null;
