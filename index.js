@@ -124,7 +124,7 @@ app.get('/api/menu/deals', async (req, res) => {
 // POST /api/order - Place new order
 app.post('/api/order', async (req, res) => {
   try {
-    const { restaurantId, customerName, customerAddress, customerPhone, items, totalPrice } = req.body;
+    const { restaurantId, customerName, customerAddress, customerPhone, items, totalPrice, selectedSize } = req.body;
     
     const order = {
       restaurantId,
@@ -133,6 +133,7 @@ app.post('/api/order', async (req, res) => {
       customerPhone,
       items,
       totalPrice,
+      selectedSize: selectedSize || null,
       orderDate: admin.firestore.FieldValue.serverTimestamp(),
       status: 'pending'
     };
@@ -142,14 +143,22 @@ app.post('/api/order', async (req, res) => {
     const restaurantDoc = await db.collection('restaurants').doc(restaurantId).get();
     const whatsapp = restaurantDoc.data().whatsapp;
     
+    // Build order details with size if pizza
+    let orderDetails = '';
+    items.forEach(item => {
+      orderDetails += `• ${item.title}`;
+      if (item.size) orderDetails += ` (${item.size})`;
+      orderDetails += ` x${item.quantity} - Rs ${item.price}\n`;
+    });
+    
     const message = `Order from Khana Bazaar 🍔%0A%0A` +
       `*Customer Details:*%0A` +
       `Name: ${customerName}%0A` +
       `Address: ${customerAddress}%0A` +
       `Phone: ${customerPhone}%0A%0A` +
       `*Order Items:*%0A` +
-      items.map(item => `• ${item.title} - Rs ${item.price}`).join('%0A') +
-      `%0A%0A*Total: Rs ${totalPrice}*%0A%0A` +
+      orderDetails +
+      `%0A*Total: Rs ${totalPrice}*%0A%0A` +
       `Order ID: ${orderRef.id}`;
     
     const whatsappUrl = `https://wa.me/${whatsapp}?text=${message}`;
@@ -210,7 +219,7 @@ app.post('/api/resturent/login', async (req, res) => {
   }
 });
 
-// GET /api/resturent/orders/:restaurantId - COMPLETELY FIXED
+// GET /api/resturent/orders/:restaurantId
 app.get('/api/resturent/orders/:restaurantId', async (req, res) => {
   try {
     const { restaurantId } = req.params;
@@ -218,7 +227,6 @@ app.get('/api/resturent/orders/:restaurantId', async (req, res) => {
     
     let query = db.collection('orders').where('restaurantId', '==', restaurantId);
     
-    // Safe date filtering
     if (startDate && endDate && startDate !== '' && endDate !== '') {
       try {
         const start = new Date(startDate);
@@ -248,7 +256,6 @@ app.get('/api/resturent/orders/:restaurantId', async (req, res) => {
       });
     });
     
-    // Sort by date (newest first)
     orders.sort((a, b) => {
       const dateA = a.orderDate ? (a.orderDate.toDate ? a.orderDate.toDate() : new Date(a.orderDate)) : new Date(0);
       const dateB = b.orderDate ? (b.orderDate.toDate ? b.orderDate.toDate() : new Date(b.orderDate)) : new Date(0);
@@ -281,14 +288,13 @@ app.get('/api/resturent/menu/:restaurantId', async (req, res) => {
 // POST /api/resturent/menu/add
 app.post('/api/resturent/menu/add', async (req, res) => {
   try {
-    const { restaurantId, restaurantName, city, title, price, images, foodType, isDeal, description } = req.body;
+    const { restaurantId, restaurantName, city, title, price, images, foodType, isDeal, description, sizePrices } = req.body;
     
     const menuItem = {
       restaurantId,
       restaurantName,
       city,
       title,
-      price,
       images: images || [],
       foodType,
       isDeal: isDeal === true || isDeal === 'true' ? true : false,
@@ -296,6 +302,15 @@ app.post('/api/resturent/menu/add', async (req, res) => {
       restaurantStatus: 'active',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
+    
+    // Handle pizza sizes or regular price
+    if (foodType === 'pizza' && sizePrices) {
+      menuItem.sizePrices = sizePrices;
+      menuItem.price = null;
+    } else {
+      menuItem.price = price || 0;
+      menuItem.sizePrices = null;
+    }
     
     const docRef = await db.collection('menu_items').add(menuItem);
     res.json({ success: true, id: docRef.id });
@@ -345,7 +360,7 @@ app.put('/api/resturent/update-whatsapp/:id', async (req, res) => {
 
 // ============ ADMIN SIDE APIs ============
 
-// POST /api/admin/login - Uses environment variables
+// POST /api/admin/login
 app.post('/api/admin/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -415,7 +430,7 @@ app.put('/api/admin/ban/:id', async (req, res) => {
   }
 });
 
-// GET /api/admin/sales - FIXED DATE FILTER
+// GET /api/admin/sales
 app.get('/api/admin/sales', async (req, res) => {
   try {
     const { startDate, endDate, restaurantId } = req.query;
