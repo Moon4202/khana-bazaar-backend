@@ -1,7 +1,7 @@
 {
   "name": "khana-bazaar-backend",
   "version": "1.0.0",
-  "description": "Backend for Khana Bazaar Restaurant Menu System",
+  "description": "Backend for Khana Bazaar Restaurant System",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
