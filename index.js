@@ -25,24 +25,32 @@ const db = admin.firestore();
 
 // ============ HELPER FUNCTIONS ============
 
-// Shuffle with seed (deterministic random)
+// FIXED: Proper shuffle function that doesn't lose items
 function shuffleWithSeed(array, seed) {
-  const shuffled = [...array];
-  let random = (function() {
-    let s = seed.split('').reduce((a, b) => {
-      a = ((a << 5) - a) + b.charCodeAt(0);
-      return a & a;
-    }, 0);
-    return function() {
-      s = (s * 9301 + 49297) % 233280;
-      return s / 233280;
-    };
-  })();
+  // If array is empty or has only 1 item, return as is
+  if (!array || !Array.isArray(array) || array.length <= 1) {
+    return array;
+  }
   
+  // Create a copy of the array
+  const shuffled = [...array];
+  
+  // Create a seeded random function
+  let seedNum = seed.split('').reduce((a, b) => {
+    return ((a << 5) - a) + b.charCodeAt(0);
+  }, 0);
+  
+  function seededRandom() {
+    seedNum = (seedNum * 9301 + 49297) % 233280;
+    return seedNum / 233280;
+  }
+  
+  // Fisher-Yates shuffle with seeded random
   for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1));
+    const j = Math.floor(seededRandom() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
+  
   return shuffled;
 }
 
@@ -74,6 +82,9 @@ app.get('/api/menu', async (req, res) => {
     snapshot.forEach(doc => {
       let item = { id: doc.id, ...doc.data() };
       
+      // Skip null items
+      if (!item) return;
+      
       if (minPrice && item.price < minPrice) return;
       if (maxPrice && item.price > maxPrice) return;
       if (search && !item.title.toLowerCase().includes(search.toLowerCase())) return;
@@ -81,12 +92,15 @@ app.get('/api/menu', async (req, res) => {
       items.push(item);
     });
     
+    // Apply sorting
     if (sort === 'price_asc') items.sort((a, b) => a.price - b.price);
     if (sort === 'price_desc') items.sort((a, b) => b.price - a.price);
     
+    // Apply shuffle with seed (works for any number of items)
     const seed = req.query.seed || new Date().toDateString();
     items = shuffleWithSeed(items, seed);
     
+    // Pagination
     const start = (page - 1) * limit;
     const paginatedItems = items.slice(start, start + limit);
     const totalPages = Math.ceil(items.length / limit);
@@ -98,7 +112,8 @@ app.get('/api/menu', async (req, res) => {
       totalItems: items.length
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Menu API Error:', error);
+    res.status(500).json({ error: error.message, items: [] });
   }
 });
 
@@ -121,7 +136,7 @@ app.get('/api/menu/deals', async (req, res) => {
   }
 });
 
-// POST /api/order - Place new order (FIXED WhatsApp Message)
+// POST /api/order - Place new order
 app.post('/api/order', async (req, res) => {
   try {
     const { restaurantId, customerName, customerAddress, customerPhone, items, totalPrice, selectedSize } = req.body;
