@@ -210,7 +210,7 @@ app.post('/api/resturent/login', async (req, res) => {
   }
 });
 
-// GET /api/resturent/orders/:restaurantId
+// GET /api/resturent/orders/:restaurantId - FIXED DATE FILTER
 app.get('/api/resturent/orders/:restaurantId', async (req, res) => {
   try {
     const { restaurantId } = req.params;
@@ -218,6 +218,7 @@ app.get('/api/resturent/orders/:restaurantId', async (req, res) => {
     
     let query = db.collection('orders').where('restaurantId', '==', restaurantId);
     
+    // FIXED: Direct Date object use karo, Timestamp.fromDate nahi
     if (startDate && endDate) {
       const start = new Date(startDate);
       start.setHours(0, 0, 0, 0);
@@ -225,11 +226,8 @@ app.get('/api/resturent/orders/:restaurantId', async (req, res) => {
       const end = new Date(endDate);
       end.setHours(23, 59, 59, 999);
       
-      const startTimestamp = admin.firestore.Timestamp.fromDate(start);
-      const endTimestamp = admin.firestore.Timestamp.fromDate(end);
-      
-      query = query.where('orderDate', '>=', startTimestamp)
-                   .where('orderDate', '<=', endTimestamp);
+      query = query.where('orderDate', '>=', start)
+                   .where('orderDate', '<=', end);
     }
     
     const snapshot = await query.get();
@@ -241,6 +239,7 @@ app.get('/api/resturent/orders/:restaurantId', async (req, res) => {
     
     res.json(orders);
   } catch (error) {
+    console.error('Orders error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -398,13 +397,14 @@ app.put('/api/admin/ban/:id', async (req, res) => {
   }
 });
 
-// GET /api/admin/sales
+// GET /api/admin/sales - FIXED DATE FILTER
 app.get('/api/admin/sales', async (req, res) => {
   try {
     const { startDate, endDate, restaurantId } = req.query;
     
     let query = db.collection('orders');
     
+    // FIXED: Direct Date object use karo, Timestamp.fromDate nahi
     if (startDate && endDate) {
       const start = new Date(startDate);
       start.setHours(0, 0, 0, 0);
@@ -412,11 +412,8 @@ app.get('/api/admin/sales', async (req, res) => {
       const end = new Date(endDate);
       end.setHours(23, 59, 59, 999);
       
-      const startTimestamp = admin.firestore.Timestamp.fromDate(start);
-      const endTimestamp = admin.firestore.Timestamp.fromDate(end);
-      
-      query = query.where('orderDate', '>=', startTimestamp)
-                   .where('orderDate', '<=', endTimestamp);
+      query = query.where('orderDate', '>=', start)
+                   .where('orderDate', '<=', end);
     }
     
     if (restaurantId && restaurantId !== '') {
@@ -435,6 +432,7 @@ app.get('/api/admin/sales', async (req, res) => {
     
     res.json({ totalSales, orders, count: orders.length });
   } catch (error) {
+    console.error('Sales error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -453,11 +451,8 @@ app.get('/api/admin/invoice', async (req, res) => {
       const end = new Date(endDate);
       end.setHours(23, 59, 59, 999);
       
-      const startTimestamp = admin.firestore.Timestamp.fromDate(start);
-      const endTimestamp = admin.firestore.Timestamp.fromDate(end);
-      
-      query = query.where('orderDate', '>=', startTimestamp)
-                   .where('orderDate', '<=', endTimestamp);
+      query = query.where('orderDate', '>=', start)
+                   .where('orderDate', '<=', end);
     }
     
     if (restaurantId && restaurantId !== '') {
@@ -497,6 +492,8 @@ app.get('/api/admin/invoice', async (req, res) => {
           orderDate = order.orderDate.toDate().toDateString();
         } else if (order.orderDate.seconds) {
           orderDate = new Date(order.orderDate.seconds * 1000).toDateString();
+        } else if (order.orderDate instanceof Date) {
+          orderDate = order.orderDate.toDateString();
         }
       }
       doc.fontSize(10).text(`${index + 1}. ${order.customerName || 'N/A'} - Rs ${order.totalPrice || 0} - ${orderDate}`);
