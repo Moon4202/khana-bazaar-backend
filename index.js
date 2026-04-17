@@ -25,18 +25,6 @@ const db = admin.firestore();
 
 // ============ HELPER FUNCTIONS ============
 
-// Format date safely for response
-function formatDateForResponse(timestamp) {
-  if (!timestamp) return null;
-  if (timestamp.toDate && typeof timestamp.toDate === 'function') {
-    return timestamp.toDate();
-  }
-  if (timestamp.seconds) {
-    return new Date(timestamp.seconds * 1000);
-  }
-  return null;
-}
-
 // Shuffle with seed (deterministic random)
 function shuffleWithSeed(array, seed) {
   const shuffled = [...array];
@@ -267,7 +255,7 @@ app.post('/api/resturent/menu/add', async (req, res) => {
       price,
       images: images || [],
       foodType,
-      isDeal: isDeal || false,
+      isDeal: isDeal === true || isDeal === 'true' ? true : false,
       description: description || '',
       restaurantStatus: 'active',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -285,6 +273,11 @@ app.put('/api/resturent/menu/edit/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
+    
+    if (updates.isDeal !== undefined) {
+      updates.isDeal = updates.isDeal === true || updates.isDeal === 'true' ? true : false;
+    }
+    
     await db.collection('menu_items').doc(id).update(updates);
     res.json({ success: true });
   } catch (error) {
