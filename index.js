@@ -25,15 +25,19 @@ const db = admin.firestore();
 
 // ============ HELPER FUNCTIONS ============
 
-// FIXED: Proper shuffle function that doesn't lose items
+// FIXED: Proper shuffle function that doesn't create null items
 function shuffleWithSeed(array, seed) {
-  // If array is empty or has only 1 item, return as is
+  // If array is empty or not valid, return as is
   if (!array || !Array.isArray(array) || array.length <= 1) {
     return array;
   }
   
-  // Create a copy of the array
-  const shuffled = [...array];
+  // Filter out any null/undefined items first
+  let validItems = array.filter(item => item !== null && item !== undefined);
+  
+  if (validItems.length <= 1) {
+    return validItems;
+  }
   
   // Create a seeded random function
   let seedNum = seed.split('').reduce((a, b) => {
@@ -46,12 +50,12 @@ function shuffleWithSeed(array, seed) {
   }
   
   // Fisher-Yates shuffle with seeded random
-  for (let i = shuffled.length - 1; i > 0; i--) {
+  for (let i = validItems.length - 1; i > 0; i--) {
     const j = Math.floor(seededRandom() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    [validItems[i], validItems[j]] = [validItems[j], validItems[i]];
   }
   
-  return shuffled;
+  return validItems;
 }
 
 // ============ CUSTOMER SIDE APIs ============
@@ -93,12 +97,14 @@ app.get('/api/menu', async (req, res) => {
     });
     
     // Apply sorting
-    if (sort === 'price_asc') items.sort((a, b) => a.price - b.price);
-    if (sort === 'price_desc') items.sort((a, b) => b.price - a.price);
+    if (sort === 'price_asc') items.sort((a, b) => (a.price || 0) - (b.price || 0));
+    if (sort === 'price_desc') items.sort((a, b) => (b.price || 0) - (a.price || 0));
     
-    // Apply shuffle with seed (works for any number of items)
-    const seed = req.query.seed || new Date().toDateString();
-    items = shuffleWithSeed(items, seed);
+    // Apply shuffle with seed (only if more than 1 item)
+    if (items.length > 1) {
+      const seed = req.query.seed || new Date().toDateString();
+      items = shuffleWithSeed(items, seed);
+    }
     
     // Pagination
     const start = (page - 1) * limit;
@@ -127,12 +133,13 @@ app.get('/api/menu/deals', async (req, res) => {
     const snapshot = await query.get();
     const items = [];
     snapshot.forEach(doc => {
-      items.push({ id: doc.id, ...doc.data() });
+      const item = { id: doc.id, ...doc.data() };
+      if (item) items.push(item);
     });
     
     res.json({ items, count: items.length });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message, items: [] });
   }
 });
 
@@ -178,6 +185,7 @@ app.post('/api/order', async (req, res) => {
     
     res.json({ success: true, orderId: orderRef.id, whatsappUrl });
   } catch (error) {
+    console.error('Order API Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -291,7 +299,10 @@ app.get('/api/resturent/menu/:restaurantId', async (req, res) => {
       .get();
     
     const items = [];
-    snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
+    snapshot.forEach(doc => {
+      const item = { id: doc.id, ...doc.data() };
+      if (item) items.push(item);
+    });
     res.json(items);
   } catch (error) {
     res.status(500).json({ error: error.message });
