@@ -69,7 +69,11 @@ app.get('/api/menu', async (req, res) => {
     let query = db.collection('menu_items');
     query = query.where('restaurantStatus', '==', 'active');
     
-    if (city) query = query.where('city', '==', city);
+    // Apply city filter FIRST (case insensitive via Firestore)
+    if (city) {
+      query = query.where('city', '==', city);
+    }
+    
     if (foodType) query = query.where('foodType', '==', foodType);
     if (restaurant) query = query.where('restaurantName', '==', restaurant);
     
@@ -78,6 +82,7 @@ app.get('/api/menu', async (req, res) => {
     
     snapshot.forEach(doc => {
       const data = doc.data();
+      // Only add if item has title and is valid
       if (data && data.title) {
         items.push({ id: doc.id, ...data });
       }
@@ -107,6 +112,8 @@ app.get('/api/menu', async (req, res) => {
     // Apply shuffle
     items = shuffleArray(items, seed);
     
+    console.log(`Menu API: City=${city}, Found ${items.length} items`);
+    
     res.json({
       items: items,
       totalItems: items.length
@@ -114,6 +121,31 @@ app.get('/api/menu', async (req, res) => {
   } catch (error) {
     console.error('Menu API Error:', error);
     res.json({ items: [], totalItems: 0 });
+  }
+});
+
+// GET /api/menu/cities - Get all unique cities
+app.get('/api/menu/cities', async (req, res) => {
+  try {
+    const snapshot = await db.collection('menu_items')
+      .where('restaurantStatus', '==', 'active')
+      .get();
+    
+    const citiesSet = new Set();
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      if (data && data.city && data.city.trim()) {
+        citiesSet.add(data.city);
+      }
+    });
+    
+    const cities = Array.from(citiesSet).sort();
+    console.log('Cities API: Found', cities.length, 'cities');
+    
+    res.json({ cities, count: cities.length });
+  } catch (error) {
+    console.error('Cities API Error:', error);
+    res.json({ cities: [], count: 0 });
   }
 });
 
@@ -309,7 +341,7 @@ app.post('/api/resturent/menu/add', async (req, res) => {
     const menuItem = {
       restaurantId,
       restaurantName,
-      city,
+      city: city || null,  // Ensure city is saved
       title,
       images: images || [],
       foodType,
@@ -328,8 +360,10 @@ app.post('/api/resturent/menu/add', async (req, res) => {
     }
     
     const docRef = await db.collection('menu_items').add(menuItem);
+    console.log('Menu item added:', title, 'City:', city);
     res.json({ success: true, id: docRef.id });
   } catch (error) {
+    console.error('Add menu error:', error);
     res.status(500).json({ error: error.message });
   }
 });
