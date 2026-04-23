@@ -23,11 +23,8 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// ============ HELPER FUNCTIONS ============
-
-// 100% FIXED: Proper shuffle function that never creates null items
-function shuffleWithSeed(array, seed) {
-  // If array is empty or not valid, return as is
+// ============ PERFECT SHUFFLE FUNCTION ============
+function perfectShuffle(array, seed) {
   if (!array || !Array.isArray(array) || array.length === 0) {
     return [];
   }
@@ -36,7 +33,7 @@ function shuffleWithSeed(array, seed) {
     return [array[0]];
   }
   
-  // Create a clean copy of the array (no nulls)
+  // Clean array - remove any null/undefined
   const cleanArray = [];
   for (let i = 0; i < array.length; i++) {
     if (array[i] !== null && array[i] !== undefined) {
@@ -44,11 +41,7 @@ function shuffleWithSeed(array, seed) {
     }
   }
   
-  if (cleanArray.length <= 1) {
-    return cleanArray;
-  }
-  
-  // Create seeded random function
+  // Create seed hash
   let seedNum = 0;
   for (let i = 0; i < seed.length; i++) {
     seedNum = ((seedNum << 5) - seedNum) + seed.charCodeAt(i);
@@ -72,8 +65,101 @@ function shuffleWithSeed(array, seed) {
 
 // ============ CUSTOMER SIDE APIs ============
 
-// GET /api/menu - Fetch menu with pagination, filters
+// GET /api/menu - NO LIMIT, fetch ALL items
 app.get('/api/menu', async (req, res) => {
+  try {
+    const city = req.query.city || null;
+    const foodType = req.query.foodType || null;
+    const restaurant = req.query.restaurant || null;
+    const minPrice = req.query.minPrice ? parseInt(req.query.minPrice) : null;
+    const maxPrice = req.query.maxPrice ? parseInt(req.query.maxPrice) : null;
+    const sort = req.query.sort || null;
+    const search = req.query.search || null;
+    
+    let query = db.collection('menu_items');
+    query = query.where('restaurantStatus', '==', 'active');
+    
+    if (city) query = query.where('city', '==', city);
+    if (foodType) query = query.where('foodType', '==', foodType);
+    if (restaurant) query = query.where('restaurantName', '==', restaurant);
+    
+    let snapshot = await query.get();
+    let items = [];
+    
+    snapshot.forEach(doc => {
+      let item = { id: doc.id, ...doc.data() };
+      if (item && item.title) {
+        items.push(item);
+      }
+    });
+    
+    // Apply price filters
+    if (minPrice) {
+      items = items.filter(item => (item.price || 0) >= minPrice);
+    }
+    if (maxPrice) {
+      items = items.filter(item => (item.price || 0) <= maxPrice);
+    }
+    
+    // Apply search filter
+    if (search) {
+      const searchLower = search.toLowerCase();
+      items = items.filter(item => item.title && item.title.toLowerCase().includes(searchLower));
+    }
+    
+    // Apply sorting
+    if (sort === 'price_asc') {
+      items.sort((a, b) => (a.price || 0) - (b.price || 0));
+    }
+    if (sort === 'price_desc') {
+      items.sort((a, b) => (b.price || 0) - (a.price || 0));
+    }
+    
+    // Apply perfect shuffle with seed
+    const seed = req.query.seed || new Date().toDateString();
+    const shuffledItems = perfectShuffle(items, seed);
+    
+    // NO LIMIT - send ALL items
+    res.json({
+      items: shuffledItems,
+      totalItems: shuffledItems.length,
+      currentPage: 1,
+      totalPages: 1
+    });
+  } catch (error) {
+    console.error('Menu API Error:', error);
+    res.json({ items: [], totalItems: 0, currentPage: 1, totalPages: 1 });
+  }
+});
+
+// GET /api/menu/deals - Sirf deals wale items
+app.get('/api/menu/deals', async (req, res) => {
+  try {
+    let query = db.collection('menu_items');
+    query = query.where('restaurantStatus', '==', 'active');
+    query = query.where('isDeal', '==', true);
+    
+    const snapshot = await query.get();
+    const items = [];
+    snapshot.forEach(doc => {
+      const item = { id: doc.id, ...doc.data() };
+      if (item && item.title) {
+        items.push(item);
+      }
+    });
+    
+    const seed = req.query.seed || new Date().toDateString();
+    const shuffledItems = perfectShuffle(items, seed);
+    
+    res.json({ items: shuffledItems, count: shuffledItems.length });
+  } catch (error) {
+    console.error('Deals API Error:', error);
+    res.json({ items: [], count: 0 });
+  }
+});
+
+// GET /api/menu/paginated - WITH pagination (for future use)
+app.get('/api/menu/paginated', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
@@ -102,36 +188,18 @@ app.get('/api/menu', async (req, res) => {
       }
     });
     
-    // Apply sorting
-    if (sort === 'price_asc') {
-      items.sort((a, b) => (a.price || 0) - (b.price || 0));
-    }
-    if (sort === 'price_desc') {
-      items.sort((a, b) => (b.price || 0) - (a.price || 0));
-    }
-    
-    // Apply price filters
-    if (minPrice) {
-      items = items.filter(item => (item.price || 0) >= minPrice);
-    }
-    if (maxPrice) {
-      items = items.filter(item => (item.price || 0) <= maxPrice);
-    }
-    
-    // Apply search filter
+    if (minPrice) items = items.filter(item => (item.price || 0) >= minPrice);
+    if (maxPrice) items = items.filter(item => (item.price || 0) <= maxPrice);
     if (search) {
       const searchLower = search.toLowerCase();
       items = items.filter(item => item.title && item.title.toLowerCase().includes(searchLower));
     }
+    if (sort === 'price_asc') items.sort((a, b) => (a.price || 0) - (b.price || 0));
+    if (sort === 'price_desc') items.sort((a, b) => (b.price || 0) - (a.price || 0));
     
-    // Apply shuffle with seed (only if more than 1 item)
-    let shuffledItems = items;
-    if (items.length > 1) {
-      const seed = req.query.seed || new Date().toDateString();
-      shuffledItems = shuffleWithSeed(items, seed);
-    }
+    const seed = req.query.seed || new Date().toDateString();
+    const shuffledItems = perfectShuffle(items, seed);
     
-    // Pagination
     const start = (page - 1) * limit;
     const paginatedItems = shuffledItems.slice(start, start + limit);
     const totalPages = Math.ceil(shuffledItems.length / limit);
@@ -145,29 +213,6 @@ app.get('/api/menu', async (req, res) => {
   } catch (error) {
     console.error('Menu API Error:', error);
     res.json({ items: [], currentPage: 1, totalPages: 1, totalItems: 0 });
-  }
-});
-
-// GET /api/menu/deals - Sirf deals wale items
-app.get('/api/menu/deals', async (req, res) => {
-  try {
-    let query = db.collection('menu_items');
-    query = query.where('restaurantStatus', '==', 'active');
-    query = query.where('isDeal', '==', true);
-    
-    const snapshot = await query.get();
-    const items = [];
-    snapshot.forEach(doc => {
-      const item = { id: doc.id, ...doc.data() };
-      if (item && item.title) {
-        items.push(item);
-      }
-    });
-    
-    res.json({ items, count: items.length });
-  } catch (error) {
-    console.error('Deals API Error:', error);
-    res.json({ items: [], count: 0 });
   }
 });
 
@@ -192,7 +237,6 @@ app.post('/api/order', async (req, res) => {
     const restaurantDoc = await db.collection('restaurants').doc(restaurantId).get();
     const whatsapp = restaurantDoc.data().whatsapp;
     
-    // Build order details with proper encoding for WhatsApp
     const orderItemsText = items.map(item => {
       const sizeText = item.size ? ` (${item.size})` : '';
       return `• ${item.title}${sizeText} - Rs ${item.price}`;
@@ -279,13 +323,10 @@ app.get('/api/resturent/orders/:restaurantId', async (req, res) => {
       try {
         const start = new Date(startDate);
         start.setHours(0, 0, 0, 0);
-        
         const end = new Date(endDate);
         end.setHours(23, 59, 59, 999);
-        
         if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
-          query = query.where('orderDate', '>=', start)
-                       .where('orderDate', '<=', end);
+          query = query.where('orderDate', '>=', start).where('orderDate', '<=', end);
         }
       } catch (dateError) {
         console.log('Date parse error:', dateError);
@@ -294,14 +335,9 @@ app.get('/api/resturent/orders/:restaurantId', async (req, res) => {
     
     const snapshot = await query.get();
     const orders = [];
-    
     snapshot.forEach(doc => {
       const data = doc.data();
-      orders.push({ 
-        id: doc.id, 
-        ...data,
-        orderDate: data.orderDate || null
-      });
+      orders.push({ id: doc.id, ...data, orderDate: data.orderDate || null });
     });
     
     orders.sort((a, b) => {
@@ -328,9 +364,7 @@ app.get('/api/resturent/menu/:restaurantId', async (req, res) => {
     const items = [];
     snapshot.forEach(doc => {
       const item = { id: doc.id, ...doc.data() };
-      if (item && item.title) {
-        items.push(item);
-      }
+      if (item && item.title) items.push(item);
     });
     res.json(items);
   } catch (error) {
@@ -376,11 +410,9 @@ app.put('/api/resturent/menu/edit/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
-    
     if (updates.isDeal !== undefined) {
       updates.isDeal = updates.isDeal === true || updates.isDeal === 'true' ? true : false;
     }
-    
     await db.collection('menu_items').doc(id).update(updates);
     res.json({ success: true });
   } catch (error) {
@@ -416,7 +448,6 @@ app.put('/api/resturent/update-whatsapp/:id', async (req, res) => {
 app.post('/api/admin/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    
     const adminEmail = process.env.ADMIN_EMAIL;
     const adminPassword = process.env.ADMIN_PASSWORD;
     
@@ -439,10 +470,7 @@ app.get('/api/admin/restaurants', async (req, res) => {
   try {
     const snapshot = await db.collection('restaurants').get();
     const restaurants = [];
-    snapshot.forEach(doc => {
-      const data = doc.data();
-      restaurants.push({ id: doc.id, ...data });
-    });
+    snapshot.forEach(doc => restaurants.push({ id: doc.id, ...doc.data() }));
     res.json(restaurants);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -466,14 +494,11 @@ app.put('/api/admin/ban/:id', async (req, res) => {
     const { id } = req.params;
     const { isBanned } = req.body;
     const newStatus = isBanned ? 'banned' : 'active';
-    
     await db.collection('restaurants').doc(id).update({ status: newStatus });
     
     const menuSnapshot = await db.collection('menu_items').where('restaurantId', '==', id).get();
     const batch = db.batch();
-    menuSnapshot.forEach(doc => {
-      batch.update(doc.ref, { restaurantStatus: newStatus });
-    });
+    menuSnapshot.forEach(doc => batch.update(doc.ref, { restaurantStatus: newStatus }));
     await batch.commit();
     
     res.json({ success: true });
@@ -486,26 +511,17 @@ app.put('/api/admin/ban/:id', async (req, res) => {
 app.get('/api/admin/sales', async (req, res) => {
   try {
     const { startDate, endDate, restaurantId } = req.query;
-    
     let query = db.collection('orders');
     
     if (startDate && endDate && startDate !== '' && endDate !== '') {
-      try {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0);
-        
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        
-        if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
-          query = query.where('orderDate', '>=', start)
-                       .where('orderDate', '<=', end);
-        }
-      } catch (dateError) {
-        console.log('Date parse error:', dateError);
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+        query = query.where('orderDate', '>=', start).where('orderDate', '<=', end);
       }
     }
-    
     if (restaurantId && restaurantId !== '') {
       query = query.where('restaurantId', '==', restaurantId);
     }
@@ -513,7 +529,6 @@ app.get('/api/admin/sales', async (req, res) => {
     const snapshot = await query.get();
     const orders = [];
     let totalSales = 0;
-    
     snapshot.forEach(doc => {
       const order = doc.data();
       orders.push({ id: doc.id, ...order });
@@ -531,26 +546,17 @@ app.get('/api/admin/sales', async (req, res) => {
 app.get('/api/admin/invoice', async (req, res) => {
   try {
     const { startDate, endDate, restaurantId, restaurantName } = req.query;
-    
     let query = db.collection('orders');
     
     if (startDate && endDate && startDate !== '' && endDate !== '') {
-      try {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0);
-        
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        
-        if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
-          query = query.where('orderDate', '>=', start)
-                       .where('orderDate', '<=', end);
-        }
-      } catch (dateError) {
-        console.log('Date parse error:', dateError);
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+        query = query.where('orderDate', '>=', start).where('orderDate', '<=', end);
       }
     }
-    
     if (restaurantId && restaurantId !== '') {
       query = query.where('restaurantId', '==', restaurantId);
     }
@@ -558,7 +564,6 @@ app.get('/api/admin/invoice', async (req, res) => {
     const snapshot = await query.get();
     const orders = [];
     let totalSales = 0;
-    
     snapshot.forEach(doc => {
       const order = doc.data();
       orders.push(order);
@@ -577,20 +582,15 @@ app.get('/api/admin/invoice', async (req, res) => {
     doc.text(`Total Orders: ${orders.length}`);
     doc.text(`Total Sales: Rs ${totalSales}`);
     doc.moveDown();
-    
     doc.fontSize(14).text('Order Details:', { underline: true });
     doc.moveDown();
     
     orders.forEach((order, index) => {
       let orderDate = 'N/A';
       if (order.orderDate) {
-        if (order.orderDate.toDate) {
-          orderDate = order.orderDate.toDate().toDateString();
-        } else if (order.orderDate.seconds) {
-          orderDate = new Date(order.orderDate.seconds * 1000).toDateString();
-        } else if (order.orderDate instanceof Date) {
-          orderDate = order.orderDate.toDateString();
-        }
+        if (order.orderDate.toDate) orderDate = order.orderDate.toDate().toDateString();
+        else if (order.orderDate.seconds) orderDate = new Date(order.orderDate.seconds * 1000).toDateString();
+        else if (order.orderDate instanceof Date) orderDate = order.orderDate.toDateString();
       }
       doc.fontSize(10).text(`${index + 1}. ${order.customerName || 'N/A'} - Rs ${order.totalPrice || 0} - ${orderDate}`);
     });
