@@ -23,49 +23,38 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// ============ PERFECT SHUFFLE FUNCTION ============
-function perfectShuffle(array, seed) {
-  if (!array || !Array.isArray(array) || array.length === 0) {
-    return [];
-  }
-  
-  if (array.length === 1) {
-    return [array[0]];
-  }
-  
-  // Clean array - remove any null/undefined
-  const cleanArray = [];
-  for (let i = 0; i < array.length; i++) {
-    if (array[i] !== null && array[i] !== undefined) {
-      cleanArray.push(array[i]);
-    }
-  }
-  
-  // Create seed hash
+// ============ HELPER FUNCTIONS ============
+
+// Simple seeded random function
+function seededRandom(seed) {
   let seedNum = 0;
   for (let i = 0; i < seed.length; i++) {
     seedNum = ((seedNum << 5) - seedNum) + seed.charCodeAt(i);
     seedNum = seedNum & seedNum;
   }
-  
-  function seededRandom() {
+  return function() {
     seedNum = (seedNum * 9301 + 49297) % 233280;
     return seedNum / 233280;
-  }
+  };
+}
+
+// Fisher-Yates shuffle with seed
+function shuffleArray(array, seed) {
+  if (!array || array.length <= 1) return array;
   
-  // Fisher-Yates shuffle
-  const result = [...cleanArray];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(seededRandom() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
+  const shuffled = [...array];
+  const random = seededRandom(seed);
   
-  return result;
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
 }
 
 // ============ CUSTOMER SIDE APIs ============
 
-// GET /api/menu - NO LIMIT, fetch ALL items
+// GET /api/menu - Fetch menu with filters
 app.get('/api/menu', async (req, res) => {
   try {
     const city = req.query.city || null;
@@ -75,6 +64,7 @@ app.get('/api/menu', async (req, res) => {
     const maxPrice = req.query.maxPrice ? parseInt(req.query.maxPrice) : null;
     const sort = req.query.sort || null;
     const search = req.query.search || null;
+    const seed = req.query.seed || new Date().toDateString();
     
     let query = db.collection('menu_items');
     query = query.where('restaurantStatus', '==', 'active');
@@ -83,13 +73,13 @@ app.get('/api/menu', async (req, res) => {
     if (foodType) query = query.where('foodType', '==', foodType);
     if (restaurant) query = query.where('restaurantName', '==', restaurant);
     
-    let snapshot = await query.get();
+    const snapshot = await query.get();
     let items = [];
     
     snapshot.forEach(doc => {
-      let item = { id: doc.id, ...doc.data() };
-      if (item && item.title) {
-        items.push(item);
+      const data = doc.data();
+      if (data && data.title) {
+        items.push({ id: doc.id, ...data });
       }
     });
     
@@ -110,109 +100,51 @@ app.get('/api/menu', async (req, res) => {
     // Apply sorting
     if (sort === 'price_asc') {
       items.sort((a, b) => (a.price || 0) - (b.price || 0));
-    }
-    if (sort === 'price_desc') {
+    } else if (sort === 'price_desc') {
       items.sort((a, b) => (b.price || 0) - (a.price || 0));
     }
     
-    // Apply perfect shuffle with seed
-    const seed = req.query.seed || new Date().toDateString();
-    const shuffledItems = perfectShuffle(items, seed);
+    // Apply shuffle
+    items = shuffleArray(items, seed);
     
-    // NO LIMIT - send ALL items
     res.json({
-      items: shuffledItems,
-      totalItems: shuffledItems.length,
-      currentPage: 1,
-      totalPages: 1
+      items: items,
+      totalItems: items.length
     });
   } catch (error) {
     console.error('Menu API Error:', error);
-    res.json({ items: [], totalItems: 0, currentPage: 1, totalPages: 1 });
+    res.json({ items: [], totalItems: 0 });
   }
 });
 
 // GET /api/menu/deals - Sirf deals wale items
 app.get('/api/menu/deals', async (req, res) => {
   try {
+    const city = req.query.city || null;
+    const seed = req.query.seed || new Date().toDateString();
+    
     let query = db.collection('menu_items');
     query = query.where('restaurantStatus', '==', 'active');
     query = query.where('isDeal', '==', true);
     
-    const snapshot = await query.get();
-    const items = [];
-    snapshot.forEach(doc => {
-      const item = { id: doc.id, ...doc.data() };
-      if (item && item.title) {
-        items.push(item);
-      }
-    });
-    
-    const seed = req.query.seed || new Date().toDateString();
-    const shuffledItems = perfectShuffle(items, seed);
-    
-    res.json({ items: shuffledItems, count: shuffledItems.length });
-  } catch (error) {
-    console.error('Deals API Error:', error);
-    res.json({ items: [], count: 0 });
-  }
-});
-
-// GET /api/menu/paginated - WITH pagination (for future use)
-app.get('/api/menu/paginated', async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    const city = req.query.city || null;
-    const foodType = req.query.foodType || null;
-    const restaurant = req.query.restaurant || null;
-    const minPrice = req.query.minPrice ? parseInt(req.query.minPrice) : null;
-    const maxPrice = req.query.maxPrice ? parseInt(req.query.maxPrice) : null;
-    const sort = req.query.sort || null;
-    const search = req.query.search || null;
-    
-    let query = db.collection('menu_items');
-    query = query.where('restaurantStatus', '==', 'active');
-    
     if (city) query = query.where('city', '==', city);
-    if (foodType) query = query.where('foodType', '==', foodType);
-    if (restaurant) query = query.where('restaurantName', '==', restaurant);
     
-    let snapshot = await query.get();
+    const snapshot = await query.get();
     let items = [];
     
     snapshot.forEach(doc => {
-      let item = { id: doc.id, ...doc.data() };
-      if (item && item.title) {
-        items.push(item);
+      const data = doc.data();
+      if (data && data.title) {
+        items.push({ id: doc.id, ...data });
       }
     });
     
-    if (minPrice) items = items.filter(item => (item.price || 0) >= minPrice);
-    if (maxPrice) items = items.filter(item => (item.price || 0) <= maxPrice);
-    if (search) {
-      const searchLower = search.toLowerCase();
-      items = items.filter(item => item.title && item.title.toLowerCase().includes(searchLower));
-    }
-    if (sort === 'price_asc') items.sort((a, b) => (a.price || 0) - (b.price || 0));
-    if (sort === 'price_desc') items.sort((a, b) => (b.price || 0) - (a.price || 0));
+    items = shuffleArray(items, seed);
     
-    const seed = req.query.seed || new Date().toDateString();
-    const shuffledItems = perfectShuffle(items, seed);
-    
-    const start = (page - 1) * limit;
-    const paginatedItems = shuffledItems.slice(start, start + limit);
-    const totalPages = Math.ceil(shuffledItems.length / limit);
-    
-    res.json({
-      items: paginatedItems,
-      currentPage: page,
-      totalPages: totalPages,
-      totalItems: shuffledItems.length
-    });
+    res.json({ items, count: items.length });
   } catch (error) {
-    console.error('Menu API Error:', error);
-    res.json({ items: [], currentPage: 1, totalPages: 1, totalItems: 0 });
+    console.error('Deals API Error:', error);
+    res.json({ items: [], count: 0 });
   }
 });
 
@@ -320,24 +252,19 @@ app.get('/api/resturent/orders/:restaurantId', async (req, res) => {
     let query = db.collection('orders').where('restaurantId', '==', restaurantId);
     
     if (startDate && endDate && startDate !== '' && endDate !== '') {
-      try {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
-          query = query.where('orderDate', '>=', start).where('orderDate', '<=', end);
-        }
-      } catch (dateError) {
-        console.log('Date parse error:', dateError);
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+        query = query.where('orderDate', '>=', start).where('orderDate', '<=', end);
       }
     }
     
     const snapshot = await query.get();
     const orders = [];
     snapshot.forEach(doc => {
-      const data = doc.data();
-      orders.push({ id: doc.id, ...data, orderDate: data.orderDate || null });
+      orders.push({ id: doc.id, ...doc.data() });
     });
     
     orders.sort((a, b) => {
@@ -363,8 +290,10 @@ app.get('/api/resturent/menu/:restaurantId', async (req, res) => {
     
     const items = [];
     snapshot.forEach(doc => {
-      const item = { id: doc.id, ...doc.data() };
-      if (item && item.title) items.push(item);
+      const data = doc.data();
+      if (data && data.title) {
+        items.push({ id: doc.id, ...data });
+      }
     });
     res.json(items);
   } catch (error) {
@@ -410,9 +339,11 @@ app.put('/api/resturent/menu/edit/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
+    
     if (updates.isDeal !== undefined) {
       updates.isDeal = updates.isDeal === true || updates.isDeal === 'true' ? true : false;
     }
+    
     await db.collection('menu_items').doc(id).update(updates);
     res.json({ success: true });
   } catch (error) {
@@ -452,7 +383,7 @@ app.post('/api/admin/login', async (req, res) => {
     const adminPassword = process.env.ADMIN_PASSWORD;
     
     if (!adminEmail || !adminPassword) {
-      return res.status(500).json({ error: 'Admin credentials not configured in environment' });
+      return res.status(500).json({ error: 'Admin credentials not configured' });
     }
     
     if (email === adminEmail && password === adminPassword) {
@@ -470,7 +401,9 @@ app.get('/api/admin/restaurants', async (req, res) => {
   try {
     const snapshot = await db.collection('restaurants').get();
     const restaurants = [];
-    snapshot.forEach(doc => restaurants.push({ id: doc.id, ...doc.data() }));
+    snapshot.forEach(doc => {
+      restaurants.push({ id: doc.id, ...doc.data() });
+    });
     res.json(restaurants);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -494,11 +427,14 @@ app.put('/api/admin/ban/:id', async (req, res) => {
     const { id } = req.params;
     const { isBanned } = req.body;
     const newStatus = isBanned ? 'banned' : 'active';
+    
     await db.collection('restaurants').doc(id).update({ status: newStatus });
     
     const menuSnapshot = await db.collection('menu_items').where('restaurantId', '==', id).get();
     const batch = db.batch();
-    menuSnapshot.forEach(doc => batch.update(doc.ref, { restaurantStatus: newStatus }));
+    menuSnapshot.forEach(doc => {
+      batch.update(doc.ref, { restaurantStatus: newStatus });
+    });
     await batch.commit();
     
     res.json({ success: true });
@@ -511,6 +447,7 @@ app.put('/api/admin/ban/:id', async (req, res) => {
 app.get('/api/admin/sales', async (req, res) => {
   try {
     const { startDate, endDate, restaurantId } = req.query;
+    
     let query = db.collection('orders');
     
     if (startDate && endDate && startDate !== '' && endDate !== '') {
@@ -522,6 +459,7 @@ app.get('/api/admin/sales', async (req, res) => {
         query = query.where('orderDate', '>=', start).where('orderDate', '<=', end);
       }
     }
+    
     if (restaurantId && restaurantId !== '') {
       query = query.where('restaurantId', '==', restaurantId);
     }
@@ -529,6 +467,7 @@ app.get('/api/admin/sales', async (req, res) => {
     const snapshot = await query.get();
     const orders = [];
     let totalSales = 0;
+    
     snapshot.forEach(doc => {
       const order = doc.data();
       orders.push({ id: doc.id, ...order });
@@ -546,6 +485,7 @@ app.get('/api/admin/sales', async (req, res) => {
 app.get('/api/admin/invoice', async (req, res) => {
   try {
     const { startDate, endDate, restaurantId, restaurantName } = req.query;
+    
     let query = db.collection('orders');
     
     if (startDate && endDate && startDate !== '' && endDate !== '') {
@@ -557,6 +497,7 @@ app.get('/api/admin/invoice', async (req, res) => {
         query = query.where('orderDate', '>=', start).where('orderDate', '<=', end);
       }
     }
+    
     if (restaurantId && restaurantId !== '') {
       query = query.where('restaurantId', '==', restaurantId);
     }
@@ -564,6 +505,7 @@ app.get('/api/admin/invoice', async (req, res) => {
     const snapshot = await query.get();
     const orders = [];
     let totalSales = 0;
+    
     snapshot.forEach(doc => {
       const order = doc.data();
       orders.push(order);
