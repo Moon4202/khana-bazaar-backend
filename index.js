@@ -73,7 +73,7 @@ function getDateRange(startDateStr, endDateStr) {
 
 // ============ CUSTOMER SIDE APIs ============
 
-// GET /api/menu - Fetch menu with filters
+// GET /api/menu - Fetch menu with filters (FIXED - shows all active items by default)
 app.get('/api/menu', async (req, res) => {
   try {
     const city = req.query.city || null;
@@ -85,45 +85,99 @@ app.get('/api/menu', async (req, res) => {
     const search = req.query.search || null;
     const seed = req.query.seed || new Date().toDateString();
     
+    console.log('Menu API called with filters:', { city, foodType, restaurant, minPrice, maxPrice, sort, search });
+    
+    // Start with all menu items - NO filters applied initially
     let query = db.collection('menu_items');
+    
+    // Only filter by restaurantStatus = active (this is correct - only show approved restaurant items)
     query = query.where('restaurantStatus', '==', 'active');
     
-    if (city) {
+    // Apply city filter ONLY if provided
+    if (city && city !== '' && city !== 'null' && city !== 'undefined') {
       query = query.where('city', '==', city);
+      console.log('Filtering by city:', city);
     }
     
-    if (foodType) query = query.where('foodType', '==', foodType);
-    if (restaurant) query = query.where('restaurantName', '==', restaurant);
+    // Apply food type filter ONLY if provided
+    if (foodType && foodType !== '' && foodType !== 'null' && foodType !== 'undefined') {
+      query = query.where('foodType', '==', foodType);
+      console.log('Filtering by foodType:', foodType);
+    }
+    
+    // Apply restaurant filter ONLY if provided
+    if (restaurant && restaurant !== '' && restaurant !== 'null' && restaurant !== 'undefined') {
+      query = query.where('restaurantName', '==', restaurant);
+      console.log('Filtering by restaurant:', restaurant);
+    }
     
     const snapshot = await query.get();
     let items = [];
     
     snapshot.forEach(doc => {
       const data = doc.data();
-      if (data && data.title) {
+      // Only add if item has a title (valid item)
+      if (data && data.title && data.title.trim() !== '') {
         items.push({ id: doc.id, ...data });
       }
     });
     
-    if (minPrice) {
-      items = items.filter(item => (item.price || 0) >= minPrice);
-    }
-    if (maxPrice) {
-      items = items.filter(item => (item.price || 0) <= maxPrice);
+    console.log(`Found ${items.length} items before price/search filters`);
+    
+    // Apply price filters (client-side because Firestore doesn't support inequality on multiple fields easily)
+    if (minPrice !== null && !isNaN(minPrice)) {
+      items = items.filter(item => {
+        // For pizza items, check sizePrices, for regular items check price
+        if (item.sizePrices) {
+          const prices = Object.values(item.sizePrices).filter(p => p !== null);
+          return prices.some(p => p >= minPrice);
+        }
+        return (item.price || 0) >= minPrice;
+      });
+      console.log(`After minPrice filter (${minPrice}): ${items.length} items`);
     }
     
-    if (search) {
+    if (maxPrice !== null && !isNaN(maxPrice)) {
+      items = items.filter(item => {
+        if (item.sizePrices) {
+          const prices = Object.values(item.sizePrices).filter(p => p !== null);
+          return prices.some(p => p <= maxPrice);
+        }
+        return (item.price || 0) <= maxPrice;
+      });
+      console.log(`After maxPrice filter (${maxPrice}): ${items.length} items`);
+    }
+    
+    // Apply search filter
+    if (search && search !== '' && search !== 'null' && search !== 'undefined') {
       const searchLower = search.toLowerCase();
-      items = items.filter(item => item.title && item.title.toLowerCase().includes(searchLower));
+      items = items.filter(item => 
+        item.title && item.title.toLowerCase().includes(searchLower) ||
+        (item.restaurantName && item.restaurantName.toLowerCase().includes(searchLower)) ||
+        (item.description && item.description.toLowerCase().includes(searchLower))
+      );
+      console.log(`After search filter (${search}): ${items.length} items`);
     }
     
+    // Apply sorting
     if (sort === 'price_asc') {
-      items.sort((a, b) => (a.price || 0) - (b.price || 0));
+      items.sort((a, b) => {
+        const priceA = a.price || (a.sizePrices ? Math.min(...Object.values(a.sizePrices).filter(p => p !== null)) : 0);
+        const priceB = b.price || (b.sizePrices ? Math.min(...Object.values(b.sizePrices).filter(p => p !== null)) : 0);
+        return priceA - priceB;
+      });
     } else if (sort === 'price_desc') {
-      items.sort((a, b) => (b.price || 0) - (a.price || 0));
+      items.sort((a, b) => {
+        const priceA = a.price || (a.sizePrices ? Math.min(...Object.values(a.sizePrices).filter(p => p !== null)) : 0);
+        const priceB = b.price || (b.sizePrices ? Math.min(...Object.values(b.sizePrices).filter(p => p !== null)) : 0);
+        return priceB - priceA;
+      });
     }
     
+    // Apply shuffle (for random order)
     items = shuffleArray(items, seed);
+    
+    console.log(`Final: Sending ${items.length} items to client`);
     
     res.json({
       items: items,
@@ -131,7 +185,7 @@ app.get('/api/menu', async (req, res) => {
     });
   } catch (error) {
     console.error('Menu API Error:', error);
-    res.json({ items: [], totalItems: 0 });
+    res.json({ items: [], totalItems: 0, error: error.message });
   }
 });
 
@@ -151,6 +205,7 @@ app.get('/api/menu/cities', async (req, res) => {
     });
     
     const cities = Array.from(citiesSet).sort();
+    console.log('Cities API: Found', cities.length, 'cities');
     
     res.json({ cities, count: cities.length });
   } catch (error) {
@@ -169,7 +224,9 @@ app.get('/api/menu/deals', async (req, res) => {
     query = query.where('restaurantStatus', '==', 'active');
     query = query.where('isDeal', '==', true);
     
-    if (city) query = query.where('city', '==', city);
+    if (city && city !== '' && city !== 'null' && city !== 'undefined') {
+      query = query.where('city', '==', city);
+    }
     
     const snapshot = await query.get();
     let items = [];
@@ -354,7 +411,7 @@ app.post('/api/resturent/menu/add', async (req, res) => {
       foodType,
       isDeal: isDeal === true || isDeal === 'true' ? true : false,
       description: description || '',
-      restaurantStatus: 'active',
+      restaurantStatus: 'active',  // IMPORTANT: Set to active so it shows on customer site
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
     
@@ -367,6 +424,7 @@ app.post('/api/resturent/menu/add', async (req, res) => {
     }
     
     const docRef = await db.collection('menu_items').add(menuItem);
+    console.log('Menu item added successfully:', title, 'City:', city, 'Restaurant:', restaurantName);
     res.json({ success: true, id: docRef.id });
   } catch (error) {
     console.error('Add menu error:', error);
@@ -391,7 +449,7 @@ app.put('/api/resturent/menu/edit/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/resturent/menu/delete/:id - FIXED WORKING ENDPOINT
+// DELETE /api/resturent/menu/delete/:id
 app.delete('/api/resturent/menu/delete/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -402,14 +460,12 @@ app.delete('/api/resturent/menu/delete/:id', async (req, res) => {
     
     console.log('Deleting menu item with ID:', id);
     
-    // Check if item exists before deleting
     const itemDoc = await db.collection('menu_items').doc(id).get();
     
     if (!itemDoc.exists) {
       return res.status(404).json({ success: false, error: 'Menu item not found' });
     }
     
-    // Delete the document
     await db.collection('menu_items').doc(id).delete();
     
     console.log('Menu item deleted successfully:', id);
@@ -474,6 +530,15 @@ app.put('/api/admin/approve/:id', async (req, res) => {
   try {
     const { id } = req.params;
     await db.collection('restaurants').doc(id).update({ status: 'active' });
+    
+    // Also update all menu items of this restaurant to active
+    const menuSnapshot = await db.collection('menu_items').where('restaurantId', '==', id).get();
+    const batch = db.batch();
+    menuSnapshot.forEach(doc => {
+      batch.update(doc.ref, { restaurantStatus: 'active' });
+    });
+    await batch.commit();
+    
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
