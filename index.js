@@ -52,6 +52,25 @@ function shuffleArray(array, seed) {
   return shuffled;
 }
 
+// Convert date to Firestore Timestamp range
+function getDateRange(startDateStr, endDateStr) {
+  if (!startDateStr || !endDateStr || startDateStr === '' || endDateStr === '') {
+    return null;
+  }
+  
+  const start = new Date(startDateStr);
+  start.setHours(0, 0, 0, 0);
+  
+  const end = new Date(endDateStr);
+  end.setHours(23, 59, 59, 999);
+  
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return null;
+  }
+  
+  return { start, end };
+}
+
 // ============ CUSTOMER SIDE APIs ============
 
 // GET /api/menu - Fetch menu with filters
@@ -69,7 +88,6 @@ app.get('/api/menu', async (req, res) => {
     let query = db.collection('menu_items');
     query = query.where('restaurantStatus', '==', 'active');
     
-    // Apply city filter FIRST (case insensitive via Firestore)
     if (city) {
       query = query.where('city', '==', city);
     }
@@ -82,13 +100,11 @@ app.get('/api/menu', async (req, res) => {
     
     snapshot.forEach(doc => {
       const data = doc.data();
-      // Only add if item has title and is valid
       if (data && data.title) {
         items.push({ id: doc.id, ...data });
       }
     });
     
-    // Apply price filters
     if (minPrice) {
       items = items.filter(item => (item.price || 0) >= minPrice);
     }
@@ -96,23 +112,18 @@ app.get('/api/menu', async (req, res) => {
       items = items.filter(item => (item.price || 0) <= maxPrice);
     }
     
-    // Apply search filter
     if (search) {
       const searchLower = search.toLowerCase();
       items = items.filter(item => item.title && item.title.toLowerCase().includes(searchLower));
     }
     
-    // Apply sorting
     if (sort === 'price_asc') {
       items.sort((a, b) => (a.price || 0) - (b.price || 0));
     } else if (sort === 'price_desc') {
       items.sort((a, b) => (b.price || 0) - (a.price || 0));
     }
     
-    // Apply shuffle
     items = shuffleArray(items, seed);
-    
-    console.log(`Menu API: City=${city}, Found ${items.length} items`);
     
     res.json({
       items: items,
@@ -140,7 +151,6 @@ app.get('/api/menu/cities', async (req, res) => {
     });
     
     const cities = Array.from(citiesSet).sort();
-    console.log('Cities API: Found', cities.length, 'cities');
     
     res.json({ cities, count: cities.length });
   } catch (error) {
@@ -149,7 +159,7 @@ app.get('/api/menu/cities', async (req, res) => {
   }
 });
 
-// GET /api/menu/deals - Sirf deals wale items
+// GET /api/menu/deals - Deals only
 app.get('/api/menu/deals', async (req, res) => {
   try {
     const city = req.query.city || null;
@@ -284,12 +294,9 @@ app.get('/api/resturent/orders/:restaurantId', async (req, res) => {
     let query = db.collection('orders').where('restaurantId', '==', restaurantId);
     
     if (startDate && endDate && startDate !== '' && endDate !== '') {
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
-        query = query.where('orderDate', '>=', start).where('orderDate', '<=', end);
+      const dateRange = getDateRange(startDate, endDate);
+      if (dateRange) {
+        query = query.where('orderDate', '>=', dateRange.start).where('orderDate', '<=', dateRange.end);
       }
     }
     
@@ -360,7 +367,6 @@ app.post('/api/resturent/menu/add', async (req, res) => {
     }
     
     const docRef = await db.collection('menu_items').add(menuItem);
-    console.log('Menu item added:', title, 'City:', city);
     res.json({ success: true, id: docRef.id });
   } catch (error) {
     console.error('Add menu error:', error);
@@ -477,7 +483,7 @@ app.put('/api/admin/ban/:id', async (req, res) => {
   }
 });
 
-// GET /api/admin/sales - FIXED VERSION
+// GET /api/admin/sales - FIXED VERSION with proper date handling
 app.get('/api/admin/sales', async (req, res) => {
   try {
     const { startDate, endDate, restaurantId } = req.query;
@@ -486,21 +492,18 @@ app.get('/api/admin/sales', async (req, res) => {
     
     let query = db.collection('orders');
     
-    // Apply restaurant filter FIRST if provided
+    // Apply restaurant filter if provided
     if (restaurantId && restaurantId !== '' && restaurantId !== 'null' && restaurantId !== 'undefined') {
       query = query.where('restaurantId', '==', restaurantId);
       console.log('Filtering by restaurantId:', restaurantId);
     }
     
-    // Apply date filters if both provided
+    // Apply date filters if both are provided
     if (startDate && endDate && startDate !== '' && endDate !== '') {
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
-        query = query.where('orderDate', '>=', start).where('orderDate', '<=', end);
-        console.log('Date filter applied:', { start, end });
+      const dateRange = getDateRange(startDate, endDate);
+      if (dateRange) {
+        query = query.where('orderDate', '>=', dateRange.start).where('orderDate', '<=', dateRange.end);
+        console.log('Date range filter applied:', dateRange.start, 'to', dateRange.end);
       }
     }
     
@@ -521,12 +524,21 @@ app.get('/api/admin/sales', async (req, res) => {
       return dateB - dateA;
     });
     
-    console.log(`Sales API: Found ${orders.length} orders for restaurant ${restaurantId || 'all'}`);
+    console.log(`Found ${orders.length} orders, Total Sales: Rs ${totalSales}`);
     
-    res.json({ totalSales, orders, count: orders.length });
+    res.json({ 
+      totalSales, 
+      orders, 
+      count: orders.length,
+      filtersApplied: {
+        restaurantId: restaurantId || 'all',
+        startDate: startDate || 'none',
+        endDate: endDate || 'none'
+      }
+    });
   } catch (error) {
     console.error('Sales API Error:', error);
-    res.json({ totalSales: 0, orders: [], count: 0, error: error.message });
+    res.status(500).json({ totalSales: 0, orders: [], count: 0, error: error.message });
   }
 });
 
@@ -537,18 +549,15 @@ app.get('/api/admin/invoice', async (req, res) => {
     
     let query = db.collection('orders');
     
-    if (startDate && endDate && startDate !== '' && endDate !== '') {
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
-        query = query.where('orderDate', '>=', start).where('orderDate', '<=', end);
-      }
-    }
-    
     if (restaurantId && restaurantId !== '' && restaurantId !== 'null' && restaurantId !== 'undefined') {
       query = query.where('restaurantId', '==', restaurantId);
+    }
+    
+    if (startDate && endDate && startDate !== '' && endDate !== '') {
+      const dateRange = getDateRange(startDate, endDate);
+      if (dateRange) {
+        query = query.where('orderDate', '>=', dateRange.start).where('orderDate', '<=', dateRange.end);
+      }
     }
     
     const snapshot = await query.get();
@@ -569,7 +578,7 @@ app.get('/api/admin/invoice', async (req, res) => {
     doc.fontSize(20).text('Khana Bazaar - Sales Invoice', { align: 'center' });
     doc.moveDown();
     doc.fontSize(12).text(`Restaurant: ${restaurantName || 'All Restaurants'}`);
-    doc.text(`Period: ${startDate} to ${endDate}`);
+    doc.text(`Period: ${startDate || 'All time'} to ${endDate || 'All time'}`);
     doc.text(`Total Orders: ${orders.length}`);
     doc.text(`Total Sales: Rs ${totalSales}`);
     doc.moveDown();
@@ -593,25 +602,21 @@ app.get('/api/admin/invoice', async (req, res) => {
   }
 });
 
-// ============ DEBUG ENDPOINT (Temporary) ============
+// ============ DEBUG ENDPOINT ============
 app.get('/api/admin/debug/:restaurantId', async (req, res) => {
   try {
     const { restaurantId } = req.params;
     
-    // Check restaurants collection
     const restaurantDoc = await db.collection('restaurants').doc(restaurantId).get();
     
-    // Check orders with this restaurantId
     const ordersSnapshot = await db.collection('orders')
       .where('restaurantId', '==', restaurantId)
       .get();
     
-    // Check menu items with this restaurantId
     const menuSnapshot = await db.collection('menu_items')
       .where('restaurantId', '==', restaurantId)
       .get();
     
-    // Sample a few orders to see their structure
     const sampleOrders = [];
     ordersSnapshot.forEach(doc => {
       sampleOrders.push({ id: doc.id, ...doc.data() });
@@ -621,7 +626,7 @@ app.get('/api/admin/debug/:restaurantId', async (req, res) => {
       restaurant: restaurantDoc.exists ? restaurantDoc.data() : null,
       ordersCount: ordersSnapshot.size,
       menuItemsCount: menuSnapshot.size,
-      sampleOrders: sampleOrders.slice(0, 3),
+      sampleOrders: sampleOrders.slice(0, 5),
       restaurantId: restaurantId
     });
   } catch (error) {
