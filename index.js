@@ -87,7 +87,6 @@ app.get('/api/menu', async (req, res) => {
     
     // Start query - only show active restaurant items
     let query = db.collection('menu_items');
-    query = query.where('restaurantStatus', '==', 'active');
     
     // Apply city filter ONLY if provided
     if (city && city !== '' && city !== 'null' && city !== 'undefined') {
