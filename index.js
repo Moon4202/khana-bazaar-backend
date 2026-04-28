@@ -341,7 +341,7 @@ app.post('/api/resturent/menu/add', async (req, res) => {
     const menuItem = {
       restaurantId,
       restaurantName,
-      city: city || null,  // Ensure city is saved
+      city: city || null,
       title,
       images: images || [],
       foodType,
@@ -477,13 +477,22 @@ app.put('/api/admin/ban/:id', async (req, res) => {
   }
 });
 
-// GET /api/admin/sales
+// GET /api/admin/sales - FIXED VERSION
 app.get('/api/admin/sales', async (req, res) => {
   try {
     const { startDate, endDate, restaurantId } = req.query;
     
+    console.log('Sales API called with:', { startDate, endDate, restaurantId });
+    
     let query = db.collection('orders');
     
+    // Apply restaurant filter FIRST if provided
+    if (restaurantId && restaurantId !== '' && restaurantId !== 'null' && restaurantId !== 'undefined') {
+      query = query.where('restaurantId', '==', restaurantId);
+      console.log('Filtering by restaurantId:', restaurantId);
+    }
+    
+    // Apply date filters if both provided
     if (startDate && endDate && startDate !== '' && endDate !== '') {
       const start = new Date(startDate);
       start.setHours(0, 0, 0, 0);
@@ -491,11 +500,8 @@ app.get('/api/admin/sales', async (req, res) => {
       end.setHours(23, 59, 59, 999);
       if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
         query = query.where('orderDate', '>=', start).where('orderDate', '<=', end);
+        console.log('Date filter applied:', { start, end });
       }
-    }
-    
-    if (restaurantId && restaurantId !== '') {
-      query = query.where('restaurantId', '==', restaurantId);
     }
     
     const snapshot = await query.get();
@@ -503,15 +509,24 @@ app.get('/api/admin/sales', async (req, res) => {
     let totalSales = 0;
     
     snapshot.forEach(doc => {
-      const order = doc.data();
-      orders.push({ id: doc.id, ...order });
-      totalSales += order.totalPrice || 0;
+      const orderData = doc.data();
+      orders.push({ id: doc.id, ...orderData });
+      totalSales += orderData.totalPrice || 0;
     });
+    
+    // Sort orders by date (newest first)
+    orders.sort((a, b) => {
+      const dateA = a.orderDate ? (a.orderDate.toDate ? a.orderDate.toDate() : new Date(a.orderDate)) : new Date(0);
+      const dateB = b.orderDate ? (b.orderDate.toDate ? b.orderDate.toDate() : new Date(b.orderDate)) : new Date(0);
+      return dateB - dateA;
+    });
+    
+    console.log(`Sales API: Found ${orders.length} orders for restaurant ${restaurantId || 'all'}`);
     
     res.json({ totalSales, orders, count: orders.length });
   } catch (error) {
-    console.error('Sales error:', error);
-    res.json({ totalSales: 0, orders: [], count: 0 });
+    console.error('Sales API Error:', error);
+    res.json({ totalSales: 0, orders: [], count: 0, error: error.message });
   }
 });
 
@@ -532,7 +547,7 @@ app.get('/api/admin/invoice', async (req, res) => {
       }
     }
     
-    if (restaurantId && restaurantId !== '') {
+    if (restaurantId && restaurantId !== '' && restaurantId !== 'null' && restaurantId !== 'undefined') {
       query = query.where('restaurantId', '==', restaurantId);
     }
     
@@ -572,6 +587,43 @@ app.get('/api/admin/invoice', async (req, res) => {
     });
     
     doc.end();
+  } catch (error) {
+    console.error('Invoice Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============ DEBUG ENDPOINT (Temporary) ============
+app.get('/api/admin/debug/:restaurantId', async (req, res) => {
+  try {
+    const { restaurantId } = req.params;
+    
+    // Check restaurants collection
+    const restaurantDoc = await db.collection('restaurants').doc(restaurantId).get();
+    
+    // Check orders with this restaurantId
+    const ordersSnapshot = await db.collection('orders')
+      .where('restaurantId', '==', restaurantId)
+      .get();
+    
+    // Check menu items with this restaurantId
+    const menuSnapshot = await db.collection('menu_items')
+      .where('restaurantId', '==', restaurantId)
+      .get();
+    
+    // Sample a few orders to see their structure
+    const sampleOrders = [];
+    ordersSnapshot.forEach(doc => {
+      sampleOrders.push({ id: doc.id, ...doc.data() });
+    });
+    
+    res.json({
+      restaurant: restaurantDoc.exists ? restaurantDoc.data() : null,
+      ordersCount: ordersSnapshot.size,
+      menuItemsCount: menuSnapshot.size,
+      sampleOrders: sampleOrders.slice(0, 3),
+      restaurantId: restaurantId
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
