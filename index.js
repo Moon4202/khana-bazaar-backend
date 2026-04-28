@@ -391,13 +391,32 @@ app.put('/api/resturent/menu/edit/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/resturent/menu/delete/:id
+// DELETE /api/resturent/menu/delete/:id - FIXED WORKING ENDPOINT
 app.delete('/api/resturent/menu/delete/:id', async (req, res) => {
   try {
+    const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'Item ID is required' });
+    }
+    
+    console.log('Deleting menu item with ID:', id);
+    
+    // Check if item exists before deleting
+    const itemDoc = await db.collection('menu_items').doc(id).get();
+    
+    if (!itemDoc.exists) {
+      return res.status(404).json({ success: false, error: 'Menu item not found' });
+    }
+    
+    // Delete the document
     await db.collection('menu_items').doc(id).delete();
-    res.json({ success: true });
+    
+    console.log('Menu item deleted successfully:', id);
+    res.json({ success: true, message: 'Menu item deleted successfully' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Delete menu error:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -483,7 +502,7 @@ app.put('/api/admin/ban/:id', async (req, res) => {
   }
 });
 
-// GET /api/admin/sales - FIXED VERSION with proper date handling
+// GET /api/admin/sales
 app.get('/api/admin/sales', async (req, res) => {
   try {
     const { startDate, endDate, restaurantId } = req.query;
@@ -492,13 +511,11 @@ app.get('/api/admin/sales', async (req, res) => {
     
     let query = db.collection('orders');
     
-    // Apply restaurant filter if provided
     if (restaurantId && restaurantId !== '' && restaurantId !== 'null' && restaurantId !== 'undefined') {
       query = query.where('restaurantId', '==', restaurantId);
       console.log('Filtering by restaurantId:', restaurantId);
     }
     
-    // Apply date filters if both are provided
     if (startDate && endDate && startDate !== '' && endDate !== '') {
       const dateRange = getDateRange(startDate, endDate);
       if (dateRange) {
@@ -517,7 +534,6 @@ app.get('/api/admin/sales', async (req, res) => {
       totalSales += orderData.totalPrice || 0;
     });
     
-    // Sort orders by date (newest first)
     orders.sort((a, b) => {
       const dateA = a.orderDate ? (a.orderDate.toDate ? a.orderDate.toDate() : new Date(a.orderDate)) : new Date(0);
       const dateB = b.orderDate ? (b.orderDate.toDate ? b.orderDate.toDate() : new Date(b.orderDate)) : new Date(0);
