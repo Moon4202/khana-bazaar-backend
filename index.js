@@ -73,7 +73,7 @@ function getDateRange(startDateStr, endDateStr) {
 
 // ============ CUSTOMER SIDE APIs ============
 
-// GET /api/menu - Fetch menu with filters (FIXED - shows all active items by default)
+// GET /api/menu - Fetch menu with filters
 app.get('/api/menu', async (req, res) => {
   try {
     const city = req.query.city || null;
@@ -87,10 +87,8 @@ app.get('/api/menu', async (req, res) => {
     
     console.log('Menu API called with filters:', { city, foodType, restaurant, minPrice, maxPrice, sort, search });
     
-    // Start with all menu items - NO filters applied initially
+    // Start query - only show active restaurant items
     let query = db.collection('menu_items');
-    
-    // Only filter by restaurantStatus = active (this is correct - only show approved restaurant items)
     query = query.where('restaurantStatus', '==', 'active');
     
     // Apply city filter ONLY if provided
@@ -116,18 +114,21 @@ app.get('/api/menu', async (req, res) => {
     
     snapshot.forEach(doc => {
       const data = doc.data();
-      // Only add if item has a title (valid item)
+      // Only add if item has a valid title
       if (data && data.title && data.title.trim() !== '') {
         items.push({ id: doc.id, ...data });
       }
     });
     
-    console.log(`Found ${items.length} items before price/search filters`);
+    // CRITICAL FIX: Remove any null/undefined items from the array
+    items = items.filter(item => item !== null && item !== undefined);
     
-    // Apply price filters (client-side because Firestore doesn't support inequality on multiple fields easily)
+    console.log(`Found ${items.length} valid items after filtering nulls`);
+    
+    // Apply price filters
     if (minPrice !== null && !isNaN(minPrice)) {
       items = items.filter(item => {
-        // For pizza items, check sizePrices, for regular items check price
+        // For pizza items, check sizePrices
         if (item.sizePrices) {
           const prices = Object.values(item.sizePrices).filter(p => p !== null);
           return prices.some(p => p >= minPrice);
@@ -152,7 +153,7 @@ app.get('/api/menu', async (req, res) => {
     if (search && search !== '' && search !== 'null' && search !== 'undefined') {
       const searchLower = search.toLowerCase();
       items = items.filter(item => 
-        item.title && item.title.toLowerCase().includes(searchLower) ||
+        (item.title && item.title.toLowerCase().includes(searchLower)) ||
         (item.restaurantName && item.restaurantName.toLowerCase().includes(searchLower)) ||
         (item.description && item.description.toLowerCase().includes(searchLower))
       );
@@ -174,7 +175,7 @@ app.get('/api/menu', async (req, res) => {
       });
     }
     
-    // Apply shuffle (for random order)
+    // Apply shuffle for random order
     items = shuffleArray(items, seed);
     
     console.log(`Final: Sending ${items.length} items to client`);
@@ -233,11 +234,13 @@ app.get('/api/menu/deals', async (req, res) => {
     
     snapshot.forEach(doc => {
       const data = doc.data();
-      if (data && data.title) {
+      if (data && data.title && data.title.trim() !== '') {
         items.push({ id: doc.id, ...data });
       }
     });
     
+    // Remove any null/undefined items
+    items = items.filter(item => item !== null && item !== undefined);
     items = shuffleArray(items, seed);
     
     res.json({ items, count: items.length });
@@ -360,7 +363,10 @@ app.get('/api/resturent/orders/:restaurantId', async (req, res) => {
     const snapshot = await query.get();
     const orders = [];
     snapshot.forEach(doc => {
-      orders.push({ id: doc.id, ...doc.data() });
+      const orderData = doc.data();
+      if (orderData) {
+        orders.push({ id: doc.id, ...orderData });
+      }
     });
     
     orders.sort((a, b) => {
@@ -387,11 +393,14 @@ app.get('/api/resturent/menu/:restaurantId', async (req, res) => {
     const items = [];
     snapshot.forEach(doc => {
       const data = doc.data();
-      if (data && data.title) {
+      if (data && data.title && data.title.trim() !== '') {
         items.push({ id: doc.id, ...data });
       }
     });
-    res.json(items);
+    
+    // Remove any null/undefined items
+    const validItems = items.filter(item => item !== null && item !== undefined);
+    res.json(validItems);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -411,7 +420,7 @@ app.post('/api/resturent/menu/add', async (req, res) => {
       foodType,
       isDeal: isDeal === true || isDeal === 'true' ? true : false,
       description: description || '',
-      restaurantStatus: 'active',  // IMPORTANT: Set to active so it shows on customer site
+      restaurantStatus: 'active',
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
     
@@ -517,7 +526,10 @@ app.get('/api/admin/restaurants', async (req, res) => {
     const snapshot = await db.collection('restaurants').get();
     const restaurants = [];
     snapshot.forEach(doc => {
-      restaurants.push({ id: doc.id, ...doc.data() });
+      const data = doc.data();
+      if (data) {
+        restaurants.push({ id: doc.id, ...data });
+      }
     });
     res.json(restaurants);
   } catch (error) {
@@ -595,8 +607,10 @@ app.get('/api/admin/sales', async (req, res) => {
     
     snapshot.forEach(doc => {
       const orderData = doc.data();
-      orders.push({ id: doc.id, ...orderData });
-      totalSales += orderData.totalPrice || 0;
+      if (orderData) {
+        orders.push({ id: doc.id, ...orderData });
+        totalSales += orderData.totalPrice || 0;
+      }
     });
     
     orders.sort((a, b) => {
@@ -647,8 +661,10 @@ app.get('/api/admin/invoice', async (req, res) => {
     
     snapshot.forEach(doc => {
       const order = doc.data();
-      orders.push(order);
-      totalSales += order.totalPrice || 0;
+      if (order) {
+        orders.push(order);
+        totalSales += order.totalPrice || 0;
+      }
     });
     
     const doc = new PDFDocument();
