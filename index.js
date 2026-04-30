@@ -73,97 +73,31 @@ function getDateRange(startDateStr, endDateStr) {
 
 // ============ CUSTOMER SIDE APIs ============
 
-// GET /api/menu - Fetch menu with filters
+// GET /api/menu - SIMPLIFIED - NO FILTERS, JUST ALL ACTIVE ITEMS
 app.get('/api/menu', async (req, res) => {
   try {
-    const city = req.query.city || null;
-    const foodType = req.query.foodType || null;
-    const restaurant = req.query.restaurant || null;
-    const minPrice = req.query.minPrice ? parseInt(req.query.minPrice) : null;
-    const maxPrice = req.query.maxPrice ? parseInt(req.query.maxPrice) : null;
-    const sort = req.query.sort || null;
-    const search = req.query.search || null;
     const seed = req.query.seed || new Date().toDateString();
     
-    // Start query - only show active restaurant items
-    let query = db.collection('menu_items');
-    query = query.where('restaurantStatus', '==', 'active');
-    
-    // Apply city filter ONLY if provided
-    if (city && city !== '' && city !== 'null' && city !== 'undefined') {
-      query = query.where('city', '==', city);
-    }
-    
-    // Apply food type filter ONLY if provided
-    if (foodType && foodType !== '' && foodType !== 'null' && foodType !== 'undefined') {
-      query = query.where('foodType', '==', foodType);
-    }
-    
-    // Apply restaurant filter ONLY if provided
-    if (restaurant && restaurant !== '' && restaurant !== 'null' && restaurant !== 'undefined') {
-      query = query.where('restaurantName', '==', restaurant);
-    }
+    // ONLY ONE FILTER - restaurantStatus = active
+    // Saare filters frontend pe honge
+    const query = db.collection('menu_items').where('restaurantStatus', '==', 'active');
     
     const snapshot = await query.get();
     let items = [];
     
     snapshot.forEach(doc => {
       const data = doc.data();
-      // Only add if item has a valid title and is not null
       if (data && data.title && data.title.trim() !== '') {
         items.push({ id: doc.id, ...data });
       }
     });
     
-    // CRITICAL FIX: Remove any null/undefined items from the array
+    // Remove any null/undefined items
     items = items.filter(item => item !== null && item !== undefined && item.title);
     
-    // Apply price filters
-    if (minPrice !== null && !isNaN(minPrice)) {
-      items = items.filter(item => {
-        if (item.sizePrices) {
-          const prices = Object.values(item.sizePrices).filter(p => p !== null);
-          return prices.some(p => p >= minPrice);
-        }
-        return (item.price || 0) >= minPrice;
-      });
-    }
+    console.log(`Menu API: Total ${items.length} active items found`);
     
-    if (maxPrice !== null && !isNaN(maxPrice)) {
-      items = items.filter(item => {
-        if (item.sizePrices) {
-          const prices = Object.values(item.sizePrices).filter(p => p !== null);
-          return prices.some(p => p <= maxPrice);
-        }
-        return (item.price || 0) <= maxPrice;
-      });
-    }
-    
-    // Apply search filter
-    if (search && search !== '' && search !== 'null' && search !== 'undefined') {
-      const searchLower = search.toLowerCase();
-      items = items.filter(item => 
-        (item.title && item.title.toLowerCase().includes(searchLower)) ||
-        (item.restaurantName && item.restaurantName.toLowerCase().includes(searchLower))
-      );
-    }
-    
-    // Apply sorting
-    if (sort === 'price_asc') {
-      items.sort((a, b) => {
-        const priceA = a.price || (a.sizePrices ? Math.min(...Object.values(a.sizePrices).filter(p => p !== null)) : 0);
-        const priceB = b.price || (b.sizePrices ? Math.min(...Object.values(b.sizePrices).filter(p => p !== null)) : 0);
-        return priceA - priceB;
-      });
-    } else if (sort === 'price_desc') {
-      items.sort((a, b) => {
-        const priceA = a.price || (a.sizePrices ? Math.min(...Object.values(a.sizePrices).filter(p => p !== null)) : 0);
-        const priceB = b.price || (b.sizePrices ? Math.min(...Object.values(b.sizePrices).filter(p => p !== null)) : 0);
-        return priceB - priceA;
-      });
-    }
-    
-    // Apply shuffle for random order
+    // ONLY SHUFFLE - no filtering
     items = shuffleArray(items, seed);
     
     res.json({
@@ -176,7 +110,7 @@ app.get('/api/menu', async (req, res) => {
   }
 });
 
-// GET /api/menu/cities - Get all unique cities
+// GET /api/menu/cities - Get all unique cities from active items
 app.get('/api/menu/cities', async (req, res) => {
   try {
     const snapshot = await db.collection('menu_items')
@@ -192,6 +126,7 @@ app.get('/api/menu/cities', async (req, res) => {
     });
     
     const cities = Array.from(citiesSet).sort();
+    console.log('Cities API: Found', cities.length, 'cities');
     
     res.json({ cities, count: cities.length });
   } catch (error) {
@@ -203,16 +138,11 @@ app.get('/api/menu/cities', async (req, res) => {
 // GET /api/menu/deals - Deals only
 app.get('/api/menu/deals', async (req, res) => {
   try {
-    const city = req.query.city || null;
     const seed = req.query.seed || new Date().toDateString();
     
     let query = db.collection('menu_items');
     query = query.where('restaurantStatus', '==', 'active');
     query = query.where('isDeal', '==', true);
-    
-    if (city && city !== '' && city !== 'null' && city !== 'undefined') {
-      query = query.where('city', '==', city);
-    }
     
     const snapshot = await query.get();
     let items = [];
@@ -416,6 +346,7 @@ app.post('/api/resturent/menu/add', async (req, res) => {
     }
     
     const docRef = await db.collection('menu_items').add(menuItem);
+    console.log('Menu item added successfully:', title, 'City:', city);
     res.json({ success: true, id: docRef.id });
   } catch (error) {
     console.error('Add menu error:', error);
